@@ -3,20 +3,23 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const { v4: uuidv4 } = require('uuid');
 
-const serviceAccount = require('./serviceAccountKey.json');
-
+// ✅ Inicializar Firebase usando variables de entorno
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert({
+    projectId: process.env.PROJECT_ID,
+    clientEmail: process.env.CLIENT_EMAIL,
+    privateKey: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),
+  }),
 });
 
 const db = admin.firestore();
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 
-// Función para obtener info del usuario
+// 🧠 Función para obtener info del usuario
 async function obtenerInfoUsuario(userId) {
   try {
     const userDoc = await db.collection('usuarios').doc(userId).get();
@@ -87,7 +90,7 @@ app.post('/api/respuestas', async (req, res) => {
       destinatarioUid: destinatarioDoc.id,
       destinatarioPhone: telefonoLimpio,
       mensaje: mensaje.trim(),
-      respuestaCitadaId: respuestaCitadaId || null, // ✅ agregado
+      respuestaCitadaId: respuestaCitadaId || null,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
 
@@ -150,7 +153,7 @@ app.get('/api/respuestas/:alertaId', async (req, res) => {
           mensaje: data.mensaje || '',
           timestamp: data.timestamp?.toDate().toISOString() || new Date().toISOString(),
           esMia: data.remitenteUid === userId,
-          respuestaCitadaId: data.respuestaCitadaId || null // ✅ incluido en la respuesta al cliente
+          respuestaCitadaId: data.respuestaCitadaId || null
         });
       } catch (error) {
         console.warn(`Error procesando documento ${doc.id}:`, error);
@@ -174,4 +177,3 @@ app.get('/api/respuestas/:alertaId', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Servidor de respuestas ejecutándose en http://localhost:${PORT}`);
 });
-
