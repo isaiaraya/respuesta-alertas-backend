@@ -1,0 +1,18 @@
+{
+  "name": "respuesta-alertas-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node respuesta-alertas.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.4.0",
+    "uuid": "^11.1.0"
+  }
+}
