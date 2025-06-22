@@ -3,8 +3,14 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const { v4: uuidv4 } = require('uuid');
 
+const app = express();
+const PORT = process.env.PORT || 3000;
 
+// ✅ Usa express.json() en lugar de bodyParser
+app.use(cors());
+app.use(express.json()); // <--- Esta línea es suficiente para parsear JSON
 
+// 🔐 Inicialización segura de Firebase
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.PROJECT_ID,
@@ -14,13 +20,8 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
-const app = express();
-const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(bodyParser.json());
-
-// Función para obtener info del usuario
+// 📌 Obtener info del usuario
 async function obtenerInfoUsuario(userId) {
   try {
     const userDoc = await db.collection('usuarios').doc(userId).get();
@@ -91,7 +92,7 @@ app.post('/api/respuestas', async (req, res) => {
       destinatarioUid: destinatarioDoc.id,
       destinatarioPhone: telefonoLimpio,
       mensaje: mensaje.trim(),
-      respuestaCitadaId: respuestaCitadaId || null, // ✅ agregado
+      respuestaCitadaId: respuestaCitadaId || null,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
 
@@ -154,7 +155,7 @@ app.get('/api/respuestas/:alertaId', async (req, res) => {
           mensaje: data.mensaje || '',
           timestamp: data.timestamp?.toDate().toISOString() || new Date().toISOString(),
           esMia: data.remitenteUid === userId,
-          respuestaCitadaId: data.respuestaCitadaId || null // ✅ incluido en la respuesta al cliente
+          respuestaCitadaId: data.respuestaCitadaId || null
         });
       } catch (error) {
         console.warn(`Error procesando documento ${doc.id}:`, error);
