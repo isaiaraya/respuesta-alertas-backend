@@ -1,49 +1,38 @@
- // server.js o index.js
-const express = require('express');
+ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { v4: uuidv4 } = require('uuid');
 
+
+
+admin.initializeApp({
+  credential: admin.credential.cert({
+    projectId: process.env.PROJECT_ID,
+    clientEmail: process.env.CLIENT_EMAIL,
+    privateKey: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),
+  }),
+});
+
+const db = admin.firestore();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
-// ✅ Inicializar Firebase con validación
-try {
-  if (!admin.apps.length) {
-    const serviceAccount = {
-      projectId: process.env.PROJECT_ID,
-      clientEmail: process.env.CLIENT_EMAIL,
-      privateKey: process.env.PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    };
-
-    if (!serviceAccount.projectId || !serviceAccount.clientEmail || !serviceAccount.privateKey) {
-      throw new Error('Variables de entorno de Firebase faltantes o incorrectas');
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-
-    console.log('✅ Firebase Admin inicializado');
-  }
-} catch (error) {
-  console.error('❌ Error al inicializar Firebase Admin:', error);
-}
-
-const db = admin.firestore();
-
-// 🔁 Función para obtener datos del usuario
+// Función para obtener info del usuario
 async function obtenerInfoUsuario(userId) {
   try {
     const userDoc = await db.collection('usuarios').doc(userId).get();
-    if (!userDoc.exists) return null;
-    const data = userDoc.data();
+    if (!userDoc.exists) {
+      console.warn(`Usuario no encontrado: ${userId}`);
+      return null;
+    }
+
+    const userData = userDoc.data();
     return {
-      nombre: data.nombre || 'Usuario',
-      avatar: data.avatar || null
+      nombre: userData.nombre || 'Usuario',
+      avatar: userData.avatar || null
     };
   } catch (error) {
     console.error('Error obteniendo info usuario:', error);
@@ -51,17 +40,30 @@ async function obtenerInfoUsuario(userId) {
   }
 }
 
-// 📥 POST: Enviar respuesta
+// 🟢 POST: Enviar respuesta
 app.post('/api/respuestas', async (req, res) => {
   try {
     const { alertaId, remitenteUid, mensaje, destinatarioPhone, respuestaCitadaId } = req.body;
 
-    if (!alertaId || !remitenteUid || !mensaje || !destinatarioPhone) {
-      return res.status(400).json({ success: false, message: 'Faltan campos obligatorios' });
+    const camposRequeridos = { alertaId, remitenteUid, mensaje, destinatarioPhone };
+    const camposFaltantes = Object.entries(camposRequeridos)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
+
+    if (camposFaltantes.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Faltan campos requeridos: ${camposFaltantes.join(', ')}`
+      });
     }
 
     const remitenteInfo = await obtenerInfoUsuario(remitenteUid);
-    if (!remitenteInfo) return res.status(404).json({ success: false, message: 'Remitente no encontrado' });
+    if (!remitenteInfo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Remitente no encontrado'
+      });
+    }
 
     const telefonoLimpio = destinatarioPhone.replace(/\D/g, '').replace(/^56/, '');
 
@@ -71,12 +73,15 @@ app.post('/api/respuestas', async (req, res) => {
       .get();
 
     if (destinatarioQuery.empty) {
-      return res.status(404).json({ success: false, message: 'Destinatario no encontrado' });
+      return res.status(404).json({
+        success: false,
+        message: `Destinatario con teléfono ${telefonoLimpio} no encontrado`
+      });
     }
 
     const destinatarioDoc = destinatarioQuery.docs[0];
-
     const respuestaId = uuidv4();
+
     const respuestaData = {
       id: respuestaId,
       alertaId,
@@ -86,31 +91,51 @@ app.post('/api/respuestas', async (req, res) => {
       destinatarioUid: destinatarioDoc.id,
       destinatarioPhone: telefonoLimpio,
       mensaje: mensaje.trim(),
-      respuestaCitadaId: respuestaCitadaId || null,
+      respuestaCitadaId: respuestaCitadaId || null, // ✅ agregado
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    await db.collection('respuestas').doc(respuestaId).set(respuestaData);
+    const batch = db.batch();
+    const respuestaRef = db.collection('respuestas').doc(respuestaId);
+    batch.set(respuestaRef, respuestaData);
+
+    await batch.commit();
 
     return res.json({
       success: true,
-      respuesta: { ...respuestaData, timestamp: new Date().toISOString() }
+      respuesta: {
+        ...respuestaData,
+        timestamp: new Date().toISOString()
+      }
     });
 
   } catch (error) {
     console.error('Error en POST /api/respuestas:', error);
-    return res.status(500).json({ success: false, message: error.message || 'Error interno' });
+    return res.status(500).json({
+      success: false,
+      message: `Error interno: ${error.message || 'Por favor revisa los logs del servidor'}`
+    });
   }
 });
 
-// 📤 GET: Obtener respuestas
+// 🔵 GET: Obtener respuestas por alertaId
 app.get('/api/respuestas/:alertaId', async (req, res) => {
   try {
     const { alertaId } = req.params;
     const { userId } = req.query;
 
-    if (!alertaId || !userId) {
-      return res.status(400).json({ success: false, message: 'alertaId y userId son requeridos' });
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el parámetro userId'
+      });
+    }
+
+    if (!alertaId || typeof alertaId !== 'string' || alertaId.length !== 36) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID de alerta inválido'
+      });
     }
 
     const respuestasSnap = await db.collection('respuestas')
@@ -118,26 +143,38 @@ app.get('/api/respuestas/:alertaId', async (req, res) => {
       .orderBy('timestamp', 'asc')
       .get();
 
-    const respuestas = respuestasSnap.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        remitenteNombre: data.remitenteNombre || 'Usuario',
-        remitenteAvatar: data.remitenteAvatar,
-        mensaje: data.mensaje || '',
-        timestamp: data.timestamp?.toDate() || new Date(),
-        esMia: data.remitenteUid === userId,
-        respuestaCitadaId: data.respuestaCitadaId || null
-      };
+    const respuestas = [];
+    respuestasSnap.forEach(doc => {
+      try {
+        const data = doc.data();
+        respuestas.push({
+          id: doc.id,
+          remitenteNombre: data.remitenteNombre || 'Usuario',
+          remitenteAvatar: data.remitenteAvatar,
+          mensaje: data.mensaje || '',
+          timestamp: data.timestamp?.toDate().toISOString() || new Date().toISOString(),
+          esMia: data.remitenteUid === userId,
+          respuestaCitadaId: data.respuestaCitadaId || null // ✅ incluido en la respuesta al cliente
+        });
+      } catch (error) {
+        console.warn(`Error procesando documento ${doc.id}:`, error);
+      }
     });
 
-    return res.json({ success: true, respuestas });
+    return res.json({
+      success: true,
+      respuestas
+    });
+
   } catch (error) {
     console.error('Error en GET /api/respuestas:', error);
-    return res.status(500).json({ success: false, message: error.message || 'Error interno' });
+    return res.status(500).json({
+      success: false,
+      message: `Error al obtener respuestas: ${error.message || 'Consulta los logs para más detalles'}`
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor backend escuchando en puerto ${PORT}`);
+  console.log(`✅ Servidor de respuestas ejecutándose en http://localhost:${PORT}`);
 });
